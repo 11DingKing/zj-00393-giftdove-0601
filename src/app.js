@@ -8,6 +8,7 @@ const workflowRouter = require("./routes/workflow");
 const craftsRouter = require("./routes/crafts");
 const archivesRouter = require("./routes/archives");
 const statisticsRouter = require("./routes/statistics");
+const changesRouter = require("./routes/changes");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,9 +21,11 @@ seed();
 
 app.use("/api/gifts", giftsRouter);
 app.use("/api/gifts", workflowRouter);
+app.use("/api/gifts", changesRouter);
 app.use("/api/crafts", craftsRouter);
 app.use("/api/archives", archivesRouter);
 app.use("/api/statistics", statisticsRouter);
+app.use("/api", changesRouter);
 
 app.get("/api/status-list", (req, res) => {
   const {
@@ -30,6 +33,10 @@ app.get("/api/status-list", (req, res) => {
     REVIEW_LEVELS,
     REVIEW_LEVEL_NAMES,
     CRAFT_TYPES,
+    CHANGE_TYPES,
+    CHANGE_TYPE_NAMES,
+    CHANGE_STATUS,
+    CHANGE_STATUS_NAMES,
   } = require("./models/db");
   res.json({
     success: true,
@@ -40,6 +47,14 @@ app.get("/api/status-list", (req, res) => {
         name: REVIEW_LEVEL_NAMES[l],
       })),
       craft_types: CRAFT_TYPES,
+      change_types: CHANGE_TYPES.map((t) => ({
+        key: t,
+        name: CHANGE_TYPE_NAMES[t],
+      })),
+      change_statuses: CHANGE_STATUS.map((s) => ({
+        key: s,
+        name: CHANGE_STATUS_NAMES[s],
+      })),
     },
   });
 });
@@ -56,7 +71,7 @@ app.listen(PORT, () => {
     `   GET    /api/gifts              - 列表（?status=&country=&year=&keyword=）`,
   );
   console.log(
-    `   GET    /api/gifts/:id           - 详情（含审核日志+工艺清单+档案）`,
+    `   GET    /api/gifts/:id           - 详情（含审核日志+工艺清单+档案+变更历史）`,
   );
   console.log(`   POST   /api/gifts               - 创建`);
   console.log(`   PUT    /api/gifts/:id           - 修改`);
@@ -68,6 +83,21 @@ app.listen(PORT, () => {
   console.log(`   POST   /api/gifts/:id/deliver   - 确认交付`);
   console.log(`   POST   /api/gifts/:id/archive   - 归档`);
   console.log(`   GET    /api/gifts/:id/logs      - 审核日志`);
+  console.log(`   POST   /api/gifts/:id/changes   - 发起外交场合变更单`);
+  console.log(`   GET    /api/gifts/:id/changes   - 某国礼变更历史`);
+  console.log(
+    `   POST   /api/gifts/:id/changes/preview - 变更预览（字段差异+受影响工艺）`,
+  );
+  console.log(
+    `   GET    /api/changes             - 全局变更列表（?gift_id=&change_type=&change_status=&year=）`,
+  );
+  console.log(`   GET    /api/changes/:id         - 变更单详情`);
+  console.log(`   POST   /api/changes/:id/approve - 审批通过变更单`);
+  console.log(`   POST   /api/changes/:id/cancel  - 取消变更单`);
+  console.log(
+    `   POST   /api/changes/:id/implement - 执行变更（重置工艺+复审+档案草稿）`,
+  );
+  console.log(`   GET    /api/changes/enum/meta   - 变更类型/状态枚举`);
   console.log(`   GET    /api/crafts/:giftId      - 工艺清单`);
   console.log(`   POST   /api/crafts/:giftId      - 添加工艺项`);
   console.log(`   PUT    /api/crafts/:itemId/complete - 完成工艺项`);
@@ -79,10 +109,14 @@ app.listen(PORT, () => {
   console.log(`   GET    /api/archives/gift/:giftId - 按国礼查档案`);
   console.log(`   GET    /api/statistics/overview - 总览`);
   console.log(
-    `   GET    /api/statistics/production-cycle - 制作周期（?year=）`,
+    `   GET    /api/statistics/production-cycle - 制作周期（?year=，含变更标记）`,
   );
   console.log(
     `   GET    /api/statistics/yearly-count - 年度统计（?start_year=&end_year=）`,
   );
-  console.log(`   GET    /api/status-list         - 状态/审核/工艺枚举`);
+  console.log(
+    `   GET    /api/statistics/change-delays - 变更延期统计（?year=）`,
+  );
+  console.log(`   GET    /api/statistics/change-overview - 变更概览（?year=）`);
+  console.log(`   GET    /api/status-list         - 状态/审核/工艺/变更枚举`);
 });

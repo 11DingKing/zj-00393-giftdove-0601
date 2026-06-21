@@ -42,6 +42,30 @@ const REVIEW_LEVEL_NAMES = {
 
 const CRAFT_TYPES = ["漆画", "云母", "金箔", "铭牌刻字"];
 
+const CHANGE_TYPES = [
+  "diplomatic_occasion",
+  "delivery_date",
+  "chinese_elements",
+  "recipient_culture_elements",
+  "theme_symbolism",
+  "other",
+];
+const CHANGE_TYPE_NAMES = {
+  diplomatic_occasion: "受赠场合变更",
+  delivery_date: "交付时间调整",
+  chinese_elements: "中华文化元素调整",
+  recipient_culture_elements: "受赠方文化元素调整",
+  theme_symbolism: "主题寓意调整",
+  other: "其他变更",
+};
+const CHANGE_STATUS = ["pending", "approved", "implemented", "cancelled"];
+const CHANGE_STATUS_NAMES = {
+  pending: "待审批",
+  approved: "审批通过",
+  implemented: "已执行",
+  cancelled: "已取消",
+};
+
 function initSchema() {
   const d = getDb();
 
@@ -103,6 +127,50 @@ function initSchema() {
       delivery_date TEXT,
       archive_date TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       notes TEXT,
+      change_count INTEGER NOT NULL DEFAULT 0,
+      symbolism_history TEXT,
+      FOREIGN KEY (gift_id) REFERENCES national_gifts(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS occasion_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gift_id TEXT NOT NULL,
+      change_type TEXT NOT NULL,
+      change_status TEXT NOT NULL DEFAULT 'pending',
+      initiator TEXT,
+      approver TEXT,
+      old_diplomatic_occasion TEXT,
+      old_delivery_date TEXT,
+      old_chinese_elements TEXT,
+      old_recipient_culture_elements TEXT,
+      old_theme_symbolism TEXT,
+      new_diplomatic_occasion TEXT,
+      new_delivery_date TEXT,
+      new_chinese_elements TEXT,
+      new_recipient_culture_elements TEXT,
+      new_theme_symbolism TEXT,
+      symbolism_before TEXT,
+      symbolism_after TEXT,
+      craft_diff_description TEXT,
+      delivery_risk TEXT,
+      extra_delay_days INTEGER DEFAULT 0,
+      reason TEXT,
+      approve_reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      approved_at TEXT,
+      implemented_at TEXT,
+      FOREIGN KEY (gift_id) REFERENCES national_gifts(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS craft_reset_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      change_id INTEGER NOT NULL,
+      gift_id TEXT NOT NULL,
+      craft_type TEXT NOT NULL,
+      craftsman TEXT,
+      was_completed INTEGER NOT NULL DEFAULT 0,
+      reset_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (change_id) REFERENCES occasion_changes(id),
       FOREIGN KEY (gift_id) REFERENCES national_gifts(id)
     );
 
@@ -114,7 +182,32 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_archive_country ON memorial_archives(recipient_country);
     CREATE INDEX IF NOT EXISTS idx_archive_year ON memorial_archives(year);
     CREATE INDEX IF NOT EXISTS idx_archive_theme ON memorial_archives(theme_symbolism);
+    CREATE INDEX IF NOT EXISTS idx_change_gift ON occasion_changes(gift_id);
+    CREATE INDEX IF NOT EXISTS idx_change_status ON occasion_changes(change_status);
+    CREATE INDEX IF NOT EXISTS idx_craftreset_change ON craft_reset_logs(change_id);
+    CREATE INDEX IF NOT EXISTS idx_craftreset_gift ON craft_reset_logs(gift_id);
   `);
+
+  const cols = d.prepare("PRAGMA table_info(national_gifts)").all();
+  const colNames = cols.map((c) => c.name);
+  if (!colNames.includes("original_delivery_date")) {
+    d.exec(`ALTER TABLE national_gifts ADD COLUMN original_delivery_date TEXT`);
+  }
+  if (!colNames.includes("has_occasion_change")) {
+    d.exec(
+      `ALTER TABLE national_gifts ADD COLUMN has_occasion_change INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
+  const archiveCols = d.prepare("PRAGMA table_info(memorial_archives)").all();
+  const archiveColNames = archiveCols.map((c) => c.name);
+  if (!archiveColNames.includes("change_count")) {
+    d.exec(
+      `ALTER TABLE memorial_archives ADD COLUMN change_count INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
+  if (!archiveColNames.includes("symbolism_history")) {
+    d.exec(`ALTER TABLE memorial_archives ADD COLUMN symbolism_history TEXT`);
+  }
 }
 
 module.exports = {
@@ -130,4 +223,8 @@ module.exports = {
   REVIEW_LEVELS,
   REVIEW_LEVEL_NAMES,
   CRAFT_TYPES,
+  CHANGE_TYPES,
+  CHANGE_TYPE_NAMES,
+  CHANGE_STATUS,
+  CHANGE_STATUS_NAMES,
 };

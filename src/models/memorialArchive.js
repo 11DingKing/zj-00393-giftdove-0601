@@ -75,8 +75,105 @@ function getArchiveByGiftId(giftId) {
     .get(giftId);
 }
 
+function upsertArchiveDraft(giftId, giftData, changeHistory) {
+  const db = getDb();
+  const existing = db
+    .prepare("SELECT * FROM memorial_archives WHERE gift_id = ?")
+    .get(giftId);
+
+  const deliveryYear = giftData.delivery_date
+    ? new Date(giftData.delivery_date).getFullYear()
+    : new Date().getFullYear();
+
+  const historyText = buildSymbolismHistory(changeHistory, existing);
+  const changeCount = Array.isArray(changeHistory)
+    ? changeHistory.length
+    : existing
+      ? existing.change_count || 0
+      : 0;
+
+  if (existing) {
+    db.prepare(
+      `
+      UPDATE memorial_archives
+      SET recipient_country = ?, year = ?, theme_symbolism = ?,
+          diplomatic_occasion = ?, body_color = ?, chinese_elements = ?,
+          recipient_culture_elements = ?, delivery_date = ?, notes = ?,
+          change_count = ?, symbolism_history = ?
+      WHERE gift_id = ?
+    `,
+    ).run(
+      giftData.recipient_country,
+      deliveryYear,
+      giftData.theme_symbolism || null,
+      giftData.diplomatic_occasion,
+      giftData.body_color,
+      giftData.chinese_elements,
+      giftData.recipient_culture_elements,
+      giftData.delivery_date || null,
+      giftData.notes || null,
+      changeCount,
+      historyText,
+      giftId,
+    );
+  } else {
+    db.prepare(
+      `
+      INSERT INTO memorial_archives (gift_id, recipient_country, year, theme_symbolism,
+        diplomatic_occasion, body_color, chinese_elements, recipient_culture_elements,
+        delivery_date, notes, change_count, symbolism_history)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      giftId,
+      giftData.recipient_country,
+      deliveryYear,
+      giftData.theme_symbolism || null,
+      giftData.diplomatic_occasion,
+      giftData.body_color,
+      giftData.chinese_elements,
+      giftData.recipient_culture_elements,
+      giftData.delivery_date || null,
+      giftData.notes || null,
+      changeCount,
+      historyText,
+    );
+  }
+  return getArchiveByGiftId(giftId);
+}
+
+function buildSymbolismHistory(changeHistory, existing) {
+  const entries = [];
+  if (existing && existing.symbolism_history) {
+    entries.push(existing.symbolism_history);
+  }
+  if (Array.isArray(changeHistory)) {
+    for (const ch of changeHistory) {
+      const lines = [];
+      lines.push(`[${ch.created_at}] ${ch.change_type_name}`);
+      if (ch.symbolism_before)
+        lines.push(`  变更前寓意：${ch.symbolism_before}`);
+      if (ch.symbolism_after) lines.push(`  变更后寓意：${ch.symbolism_after}`);
+      if (ch.craft_diff_description)
+        lines.push(`  工艺差异：${ch.craft_diff_description}`);
+      if (ch.delivery_risk) lines.push(`  交付风险：${ch.delivery_risk}`);
+      if (ch.extra_delay_days)
+        lines.push(`  预估延期：${ch.extra_delay_days}天`);
+      if (ch.reason) lines.push(`  原因：${ch.reason}`);
+      if (ch.change_status === "implemented") {
+        lines.push(`  状态：已执行`);
+      } else if (ch.change_status === "approved") {
+        lines.push(`  状态：审批通过`);
+      }
+      entries.push(lines.join("\n"));
+    }
+  }
+  return entries.length > 0 ? entries.join("\n\n") : null;
+}
+
 module.exports = {
   createArchive,
   searchArchives,
   getArchiveByGiftId,
+  upsertArchiveDraft,
 };

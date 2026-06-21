@@ -10,6 +10,7 @@ const {
 const { getAuditLogs } = require("../models/auditLog");
 const { getCraftItems } = require("../models/craftItem");
 const { getArchiveByGiftId } = require("../models/memorialArchive");
+const { listChangesByGiftId } = require("../models/occasionChange");
 
 router.get("/", (req, res) => {
   const filters = {
@@ -30,14 +31,17 @@ router.get("/:id", (req, res) => {
   const auditLogs = getAuditLogs(req.params.id);
   const craftItems = getCraftItems(req.params.id);
   const archive = getArchiveByGiftId(req.params.id);
+  const occasionChanges = listChangesByGiftId(req.params.id);
 
   res.json({
     success: true,
     data: {
       ...gift,
+      has_occasion_change: !!gift.has_occasion_change,
       audit_logs: auditLogs,
       craft_items: craftItems,
       archive: archive,
+      occasion_changes: occasionChanges,
     },
   });
 });

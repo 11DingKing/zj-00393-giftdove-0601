@@ -112,6 +112,64 @@ function resetCraftsForRework(giftId) {
   return true;
 }
 
+function resetCraftsByType(giftId, craftTypes) {
+  const db = getDb();
+  if (!craftTypes || craftTypes.length === 0) return [];
+  const placeholders = craftTypes.map(() => "?").join(",");
+  const items = db
+    .prepare(
+      `SELECT * FROM craft_items WHERE gift_id = ? AND craft_type IN (${placeholders})`,
+    )
+    .all(giftId, ...craftTypes);
+  const resetItems = [];
+  for (const item of items) {
+    if (item.completed) {
+      db.prepare(
+        `UPDATE craft_items SET completed = 0, completed_at = NULL WHERE id = ?`,
+      ).run(item.id);
+      resetItems.push({
+        ...item,
+        completed: 0,
+        completed_at: null,
+        was_reset: true,
+      });
+    } else {
+      resetItems.push({ ...item, was_reset: false });
+    }
+  }
+  return resetItems;
+}
+
+function getCraftsmanSchedule(craftsman, includeCompleted = false) {
+  const db = getDb();
+  let query = `SELECT ci.*, ng.title, ng.status, ng.delivery_date
+    FROM craft_items ci JOIN national_gifts ng ON ci.gift_id = ng.id
+    WHERE ci.craftsman = ?`;
+  const params = [craftsman];
+  if (!includeCompleted) {
+    query += " AND ci.completed = 0";
+  }
+  query += " ORDER BY ng.delivery_date ASC, ng.created_at ASC";
+  return db.prepare(query).all(...params);
+}
+
+function updateCraftsman(itemId, newCraftsman, notes) {
+  const db = getDb();
+  const item = db.prepare("SELECT * FROM craft_items WHERE id = ?").get(itemId);
+  if (!item) return null;
+  const fields = ["craftsman = ?"];
+  const params = [newCraftsman];
+  if (notes !== undefined) {
+    fields.push("notes = ?");
+    params.push(notes);
+  }
+  params.push(itemId);
+  db.prepare(`UPDATE craft_items SET ${fields.join(", ")} WHERE id = ?`).run(
+    ...params,
+  );
+  return db.prepare("SELECT * FROM craft_items WHERE id = ?").get(itemId);
+}
+
 module.exports = {
   addCraftItem,
   getCraftItems,
@@ -120,4 +178,7 @@ module.exports = {
   areAllCraftsCompleted,
   validateCraftList,
   resetCraftsForRework,
+  resetCraftsByType,
+  getCraftsmanSchedule,
+  updateCraftsman,
 };

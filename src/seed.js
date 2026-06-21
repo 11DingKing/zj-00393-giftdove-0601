@@ -13,9 +13,14 @@ const {
   createGift,
   updateGiftStatus,
   getGiftById,
+  updateGift,
 } = require("./models/nationalGift");
 const { addAuditLog } = require("./models/auditLog");
-const { addCraftItem, completeCraftItem } = require("./models/craftItem");
+const {
+  addCraftItem,
+  completeCraftItem,
+  getCraftItems,
+} = require("./models/craftItem");
 const { createArchive } = require("./models/memorialArchive");
 
 function seed() {
@@ -144,23 +149,25 @@ function seed() {
         });
       }
     } else if (i === 3) {
-      addAuditLog(
-        gift.id,
-        REVIEW_LEVELS[0],
-        "approve",
-        "系统种子",
-        "品牌审核通过",
-      );
-      addAuditLog(
-        gift.id,
-        REVIEW_LEVELS[1],
-        "approve",
-        "系统种子",
-        "外事审核通过",
-      );
-      updateGiftStatus(gift.id, STATUS_PENDING_REVIEW, {
-        current_review_level: REVIEW_LEVELS[2],
+      for (const level of REVIEW_LEVELS) {
+        addAuditLog(gift.id, level, "approve", "系统种子", `${level}审核通过`);
+      }
+      updateGiftStatus(gift.id, STATUS_IN_PRODUCTION, {
+        production_start_date: "2023-10-01",
+        current_review_level: null,
       });
+      const craftTypes = [
+        { type: "漆画", craftsman: "张师傅" },
+        { type: "云母", craftsman: "李师傅" },
+        { type: "金箔", craftsman: "王师傅" },
+        { type: "铭牌刻字", craftsman: "赵师傅" },
+      ];
+      for (const ct of craftTypes) {
+        addCraftItem(gift.id, ct.type, ct.craftsman);
+      }
+      const items = getCraftItems(gift.id);
+      completeCraftItem(items[0].id);
+      completeCraftItem(items[1].id);
     } else if (i === 4) {
       addAuditLog(
         gift.id,
@@ -183,6 +190,160 @@ function seed() {
       });
     }
   }
+
+  const seedChangeDemo = (giftIds) => {
+    const db = getDb();
+    const changeCount = db
+      .prepare("SELECT COUNT(*) as c FROM occasion_changes")
+      .get().c;
+    if (changeCount > 0) return;
+
+    const japanGiftId = giftIds.find(
+      (id) =>
+        id &&
+        id.startsWith("GL-") &&
+        db
+          .prepare("SELECT recipient_country FROM national_gifts WHERE id = ?")
+          .get(id)?.recipient_country === "日本",
+    );
+    const maldivesGiftId = giftIds.find(
+      (id) =>
+        id &&
+        db
+          .prepare("SELECT recipient_country FROM national_gifts WHERE id = ?")
+          .get(id)?.recipient_country === "马尔代夫",
+    );
+
+    if (japanGiftId) {
+      const before = db
+        .prepare("SELECT * FROM national_gifts WHERE id = ?")
+        .get(japanGiftId);
+      const stmt1 = db.prepare(`
+        INSERT INTO occasion_changes (
+          gift_id, change_type, change_status, initiator, approver,
+          old_diplomatic_occasion, old_delivery_date,
+          old_chinese_elements, old_recipient_culture_elements, old_theme_symbolism,
+          new_diplomatic_occasion, new_delivery_date,
+          new_chinese_elements, new_recipient_culture_elements, new_theme_symbolism,
+          symbolism_before, symbolism_after, craft_diff_description,
+          delivery_risk, extra_delay_days, reason, approve_reason,
+          created_at, approved_at, implemented_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt1.run(
+        japanGiftId,
+        "diplomatic_occasion",
+        "implemented",
+        "外事处王主任",
+        "李副总领事",
+        before.diplomatic_occasion,
+        before.delivery_date,
+        before.chinese_elements,
+        before.recipient_culture_elements,
+        before.theme_symbolism,
+        "中日和平友好条约45周年·首相特使访华",
+        "2023-12-20",
+        "水墨山水、云龙纹、松竹梅岁寒三友",
+        "樱花纹、和纸纹理、富士山剪影",
+        "一衣带水·世代友好·岁寒知松柏",
+        "原寓意以水墨与樱花交融象征一衣带水世代友好",
+        "新寓意追加岁寒三友与富士山，强化历经考验的友谊深度",
+        "漆画需重绘松竹梅与富士山元素，云母需调整山水层次，金箔需追加富士山轮廓，铭牌需更新外交场合全称",
+        "原交付窗口紧张，重新绘制漆画至少需10天，存在特使访华前无法交付的风险",
+        12,
+        "日本方面临时提升接待规格，由首相特使代替内阁官房长官出席赠礼仪式，需强化外交场合庄重感与文化深度",
+        "同意变更，工艺部门务必优先排期，外事处配合协调物流",
+        "2023-10-28 09:30:00",
+        "2023-10-28 14:00:00",
+        "2023-10-29 08:00:00",
+      );
+
+      db.prepare(
+        `UPDATE national_gifts SET
+          diplomatic_occasion = '中日和平友好条约45周年·首相特使访华',
+          delivery_date = '2023-12-20',
+          chinese_elements = '水墨山水、云龙纹、松竹梅岁寒三友',
+          recipient_culture_elements = '樱花纹、和纸纹理、富士山剪影',
+          theme_symbolism = '一衣带水·世代友好·岁寒知松柏',
+          original_delivery_date = '2023-11-10',
+          has_occasion_change = 1,
+          production_end_date = '2023-12-01',
+          updated_at = datetime('now', 'localtime')
+        WHERE id = ?`,
+      ).run(japanGiftId);
+
+      db.prepare(
+        `UPDATE craft_items SET completed = 0, completed_at = NULL WHERE gift_id = ?`,
+      ).run(japanGiftId);
+
+      const cr1 = db.prepare("SELECT last_insert_rowid() as id").get().id;
+      const crafts = db
+        .prepare("SELECT * FROM craft_items WHERE gift_id = ?")
+        .all(japanGiftId);
+      for (const c of crafts) {
+        db.prepare(
+          `
+          INSERT INTO craft_reset_logs (change_id, gift_id, craft_type, craftsman, was_completed, reset_at)
+          VALUES (?, ?, ?, ?, 1, '2023-10-29 08:00:00')
+        `,
+        ).run(cr1, japanGiftId, c.craft_type, c.craftsman);
+      }
+    }
+
+    if (maldivesGiftId) {
+      const before = db
+        .prepare("SELECT * FROM national_gifts WHERE id = ?")
+        .get(maldivesGiftId);
+      const stmt2 = db.prepare(`
+        INSERT INTO occasion_changes (
+          gift_id, change_type, change_status, initiator, approver,
+          old_diplomatic_occasion, old_delivery_date,
+          old_chinese_elements, old_recipient_culture_elements, old_theme_symbolism,
+          new_diplomatic_occasion, new_delivery_date,
+          new_chinese_elements, new_recipient_culture_elements, new_theme_symbolism,
+          symbolism_before, symbolism_after, craft_diff_description,
+          delivery_risk, extra_delay_days, reason, approve_reason,
+          created_at, approved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt2.run(
+        maldivesGiftId,
+        "delivery_date",
+        "approved",
+        "项目协调员小赵",
+        "张经理",
+        before.diplomatic_occasion,
+        before.delivery_date,
+        before.chinese_elements,
+        before.recipient_culture_elements,
+        before.theme_symbolism,
+        before.diplomatic_occasion,
+        "2024-01-10",
+        before.chinese_elements,
+        before.recipient_culture_elements,
+        before.theme_symbolism,
+        "寓意无变化",
+        "寓意无变化",
+        "工艺内容无影响，但需协调四位师傅后续订单排期，云母和金箔工序窗口需往后顺延两周",
+        "顺延至元旦后，避免马尔代夫圣诞假期海关与物流延误",
+        7,
+        "马尔代夫总统办公室建议将赠礼仪式避开圣诞与新年假期，顺延至1月中旬",
+        "同意调整交付时间，工艺组同步调整排期表",
+        "2023-12-01 11:00:00",
+        "2023-12-01 16:30:00",
+      );
+    }
+  };
+
+  const demoGiftIds = gifts.map((_, i) => {
+    const row = db
+      .prepare(
+        "SELECT id FROM national_gifts ORDER BY created_at ASC LIMIT 1 OFFSET ?",
+      )
+      .get(i);
+    return row ? row.id : null;
+  });
+  seedChangeDemo(demoGiftIds);
 
   console.log(`已植入 ${gifts.length} 份国礼车示例数据`);
 }
