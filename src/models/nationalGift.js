@@ -130,6 +130,16 @@ function updateGiftStatus(id, status, extraFields = {}) {
   return getGiftById(id);
 }
 
+function incrementDesignVersion(id) {
+  const db = getDb();
+  const existing = getGiftById(id);
+  if (!existing) return null;
+  db.prepare(
+    `UPDATE national_gifts SET design_version = design_version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
+  ).run(id);
+  return getGiftById(id);
+}
+
 function deleteGift(id) {
   const db = getDb();
   const existing = getGiftById(id);
@@ -147,5 +157,6 @@ module.exports = {
   createGift,
   updateGift,
   updateGiftStatus,
+  incrementDesignVersion,
   deleteGift,
 };

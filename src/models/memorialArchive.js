@@ -1,42 +1,74 @@
 const { getDb } = require("./db");
+const { getGiftById } = require("./nationalGift");
 
 function createArchive(giftId, giftData) {
   const db = getDb();
-  const existing = db
-    .prepare("SELECT * FROM memorial_archives WHERE gift_id = ?")
-    .get(giftId);
-  if (existing) return existing;
+  const gift = giftData || getGiftById(giftId);
+  const designVersion = gift ? gift.design_version : 1;
 
-  const deliveryYear = giftData.delivery_date
-    ? new Date(giftData.delivery_date).getFullYear()
+  db.prepare(
+    `UPDATE memorial_archives SET is_final = 0 WHERE gift_id = ? AND is_final = 1`,
+  ).run(giftId);
+
+  const existing = db
+    .prepare(
+      "SELECT * FROM memorial_archives WHERE gift_id = ? AND design_version = ?",
+    )
+    .get(giftId, designVersion);
+
+  const deliveryYear = gift.delivery_date
+    ? new Date(gift.delivery_date).getFullYear()
     : new Date().getFullYear();
 
-  const stmt = db.prepare(`
-    INSERT INTO memorial_archives (gift_id, recipient_country, year, theme_symbolism,
-      diplomatic_occasion, body_color, chinese_elements, recipient_culture_elements,
-      delivery_date, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(
-    giftId,
-    giftData.recipient_country,
-    deliveryYear,
-    giftData.theme_symbolism || null,
-    giftData.diplomatic_occasion,
-    giftData.body_color,
-    giftData.chinese_elements,
-    giftData.recipient_culture_elements,
-    giftData.delivery_date || null,
-    giftData.notes || null,
-  );
-  return db
-    .prepare("SELECT * FROM memorial_archives WHERE gift_id = ?")
-    .get(giftId);
+  if (existing) {
+    db.prepare(
+      `
+      UPDATE memorial_archives
+      SET recipient_country = ?, year = ?, theme_symbolism = ?,
+          diplomatic_occasion = ?, body_color = ?, chinese_elements = ?,
+          recipient_culture_elements = ?, delivery_date = ?, notes = ?,
+          is_final = 1, archive_date = datetime('now', 'localtime')
+      WHERE id = ?
+    `,
+    ).run(
+      gift.recipient_country,
+      deliveryYear,
+      gift.theme_symbolism || null,
+      gift.diplomatic_occasion,
+      gift.body_color,
+      gift.chinese_elements,
+      gift.recipient_culture_elements,
+      gift.delivery_date || null,
+      gift.notes || null,
+      existing.id,
+    );
+  } else {
+    const stmt = db.prepare(`
+      INSERT INTO memorial_archives (gift_id, design_version, is_final, recipient_country, year, theme_symbolism,
+        diplomatic_occasion, body_color, chinese_elements, recipient_culture_elements,
+        delivery_date, notes)
+      VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      giftId,
+      designVersion,
+      gift.recipient_country,
+      deliveryYear,
+      gift.theme_symbolism || null,
+      gift.diplomatic_occasion,
+      gift.body_color,
+      gift.chinese_elements,
+      gift.recipient_culture_elements,
+      gift.delivery_date || null,
+      gift.notes || null,
+    );
+  }
+  return getArchiveByGiftId(giftId);
 }
 
 function searchArchives(filters = {}) {
   const db = getDb();
-  const conditions = [];
+  const conditions = ["is_final = 1"];
   const params = [];
 
   if (filters.recipient_country) {
@@ -71,15 +103,32 @@ function searchArchives(filters = {}) {
 function getArchiveByGiftId(giftId) {
   const db = getDb();
   return db
-    .prepare("SELECT * FROM memorial_archives WHERE gift_id = ?")
+    .prepare(
+      "SELECT * FROM memorial_archives WHERE gift_id = ? AND is_final = 1 ORDER BY design_version DESC LIMIT 1",
+    )
     .get(giftId);
+}
+
+function getArchiveDraftByGiftId(giftId) {
+  const db = getDb();
+  const gift = getGiftById(giftId);
+  if (!gift) return null;
+  return db
+    .prepare(
+      "SELECT * FROM memorial_archives WHERE gift_id = ? AND design_version = ? ORDER BY id DESC LIMIT 1",
+    )
+    .get(giftId, gift.design_version);
 }
 
 function upsertArchiveDraft(giftId, giftData, changeHistory) {
   const db = getDb();
+  const designVersion = giftData.design_version || 1;
+
   const existing = db
-    .prepare("SELECT * FROM memorial_archives WHERE gift_id = ?")
-    .get(giftId);
+    .prepare(
+      "SELECT * FROM memorial_archives WHERE gift_id = ? AND design_version = ? AND is_final = 0",
+    )
+    .get(giftId, designVersion);
 
   const deliveryYear = giftData.delivery_date
     ? new Date(giftData.delivery_date).getFullYear()
@@ -99,8 +148,9 @@ function upsertArchiveDraft(giftId, giftData, changeHistory) {
       SET recipient_country = ?, year = ?, theme_symbolism = ?,
           diplomatic_occasion = ?, body_color = ?, chinese_elements = ?,
           recipient_culture_elements = ?, delivery_date = ?, notes = ?,
-          change_count = ?, symbolism_history = ?
-      WHERE gift_id = ?
+          change_count = ?, symbolism_history = ?,
+          archive_date = datetime('now', 'localtime')
+      WHERE id = ?
     `,
     ).run(
       giftData.recipient_country,
@@ -114,18 +164,19 @@ function upsertArchiveDraft(giftId, giftData, changeHistory) {
       giftData.notes || null,
       changeCount,
       historyText,
-      giftId,
+      existing.id,
     );
   } else {
     db.prepare(
       `
-      INSERT INTO memorial_archives (gift_id, recipient_country, year, theme_symbolism,
+      INSERT INTO memorial_archives (gift_id, design_version, is_final, recipient_country, year, theme_symbolism,
         diplomatic_occasion, body_color, chinese_elements, recipient_culture_elements,
         delivery_date, notes, change_count, symbolism_history)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     ).run(
       giftId,
+      designVersion,
       giftData.recipient_country,
       deliveryYear,
       giftData.theme_symbolism || null,
@@ -139,7 +190,7 @@ function upsertArchiveDraft(giftId, giftData, changeHistory) {
       historyText,
     );
   }
-  return getArchiveByGiftId(giftId);
+  return getArchiveDraftByGiftId(giftId);
 }
 
 function buildSymbolismHistory(changeHistory, existing) {
@@ -175,5 +226,6 @@ module.exports = {
   createArchive,
   searchArchives,
   getArchiveByGiftId,
+  getArchiveDraftByGiftId,
   upsertArchiveDraft,
 };

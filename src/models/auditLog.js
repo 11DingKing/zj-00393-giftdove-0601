@@ -1,10 +1,17 @@
 const { getDb, REVIEW_LEVELS, REVIEW_LEVEL_NAMES } = require("./db");
 
-function addAuditLog(giftId, reviewLevel, action, reviewer, reason) {
+function addAuditLog(
+  giftId,
+  reviewLevel,
+  action,
+  reviewer,
+  reason,
+  designVersion,
+) {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO audit_logs (gift_id, review_level, action, reviewer, reason)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO audit_logs (gift_id, review_level, action, reviewer, reason, design_version)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     giftId,
@@ -12,6 +19,7 @@ function addAuditLog(giftId, reviewLevel, action, reviewer, reason) {
     action,
     reviewer || null,
     reason || null,
+    designVersion || null,
   );
   return getAuditLogs(giftId);
 }

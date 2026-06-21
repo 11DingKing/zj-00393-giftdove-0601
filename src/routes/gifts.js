@@ -9,7 +9,10 @@ const {
 } = require("../models/nationalGift");
 const { getAuditLogs } = require("../models/auditLog");
 const { getCraftItems } = require("../models/craftItem");
-const { getArchiveByGiftId } = require("../models/memorialArchive");
+const {
+  getArchiveByGiftId,
+  getArchiveDraftByGiftId,
+} = require("../models/memorialArchive");
 const { listChangesByGiftId } = require("../models/occasionChange");
 
 router.get("/", (req, res) => {
@@ -31,6 +34,7 @@ router.get("/:id", (req, res) => {
   const auditLogs = getAuditLogs(req.params.id);
   const craftItems = getCraftItems(req.params.id);
   const archive = getArchiveByGiftId(req.params.id);
+  const archiveDraft = getArchiveDraftByGiftId(req.params.id);
   const occasionChanges = listChangesByGiftId(req.params.id);
 
   res.json({
@@ -41,6 +45,7 @@ router.get("/:id", (req, res) => {
       audit_logs: auditLogs,
       craft_items: craftItems,
       archive: archive,
+      archive_draft: archiveDraft,
       occasion_changes: occasionChanges,
     },
   });

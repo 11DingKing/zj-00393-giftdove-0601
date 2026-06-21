@@ -8,7 +8,12 @@ const {
   STATUS_PENDING_REVIEW,
   REVIEW_LEVELS,
 } = require("./db");
-const { getGiftById, updateGift, updateGiftStatus } = require("./nationalGift");
+const {
+  getGiftById,
+  updateGift,
+  updateGiftStatus,
+  incrementDesignVersion,
+} = require("./nationalGift");
 const { addAuditLog } = require("./auditLog");
 
 function createChangeRequest(giftId, data) {
@@ -67,7 +72,8 @@ function createChangeRequest(giftId, data) {
     "foreign_affairs",
     "change_request",
     data.initiator || "系统",
-    `发起${CHANGE_TYPE_NAMES[data.change_type]}：${data.reason || "无详细说明"}`,
+    `发起${CHANGE_TYPE_NAMES[data.change_type]}：${data.reason || "无详细说明"}（设计稿 v${gift.design_version}）`,
+    gift.design_version,
   );
 
   return change;
@@ -135,6 +141,8 @@ function approveChange(id, approver, approveReason) {
   if (change.change_status !== "pending") {
     throw new Error(`当前状态"${change.change_status_name}"不可审批`);
   }
+  const gift = getGiftById(change.gift_id);
+  const designVersion = gift ? gift.design_version : 1;
   db.prepare(
     `
     UPDATE occasion_changes
@@ -148,7 +156,8 @@ function approveChange(id, approver, approveReason) {
     "foreign_affairs",
     "change_approve",
     approver || "系统",
-    `审批通过变更单#${id}：${approveReason || "无"}`,
+    `审批通过变更单#${id}：${approveReason || "无"}（设计稿 v${designVersion}）`,
+    designVersion,
   );
   return getChangeById(id);
 }
@@ -160,6 +169,8 @@ function cancelChange(id, operator, reason) {
   if (change.change_status === "implemented") {
     throw new Error("已执行的变更不可取消");
   }
+  const gift = getGiftById(change.gift_id);
+  const designVersion = gift ? gift.design_version : 1;
   db.prepare(
     `
     UPDATE occasion_changes
@@ -172,7 +183,8 @@ function cancelChange(id, operator, reason) {
     "foreign_affairs",
     "change_cancel",
     operator || "系统",
-    `取消变更单#${id}：${reason || "无"}`,
+    `取消变更单#${id}：${reason || "无"}（设计稿 v${designVersion}）`,
+    designVersion,
   );
   return getChangeById(id);
 }
@@ -189,7 +201,12 @@ function implementChange(id, operator, affectedCraftTypes) {
   const gift = getGiftById(change.gift_id);
   if (!gift) throw new Error("关联国礼车不存在");
 
+  const oldVersion = gift.design_version;
+  const newVersion = oldVersion + 1;
+
   const tx = db.transaction(() => {
+    incrementDesignVersion(change.gift_id);
+
     if (!gift.original_delivery_date && gift.delivery_date) {
       db.prepare(
         `UPDATE national_gifts SET original_delivery_date = ?, has_occasion_change = 1 WHERE id = ?`,
@@ -272,6 +289,17 @@ function implementChange(id, operator, affectedCraftTypes) {
       }
     }
 
+    const craftItemsAll = db
+      .prepare("SELECT * FROM craft_items WHERE gift_id = ?")
+      .all(change.gift_id);
+    for (const craft of craftItemsAll) {
+      if (!craftsToReset.includes(craft.craft_type) && craft.completed) {
+        db.prepare(
+          `UPDATE craft_items SET completed_version = ? WHERE id = ?`,
+        ).run(newVersion, craft.id);
+      }
+    }
+
     db.prepare(
       `
       UPDATE occasion_changes
@@ -285,19 +313,23 @@ function implementChange(id, operator, affectedCraftTypes) {
       "craft",
       "change_implement",
       operator || "系统",
-      `执行变更单#${id}，重置工艺：${craftsToReset.join("、") || "无"}，设计稿需复审`,
+      `执行变更单#${id}，设计稿从 v${oldVersion} 升级为 v${newVersion}，重置工艺：${craftsToReset.join("、") || "无"}，设计稿需复审`,
+      newVersion,
     );
 
     if (gift.status === STATUS_IN_PRODUCTION) {
       updateGiftStatus(change.gift_id, STATUS_PENDING_REVIEW, {
         current_review_level: REVIEW_LEVELS[0],
+        production_start_date: null,
+        production_end_date: null,
       });
       addAuditLog(
         change.gift_id,
         REVIEW_LEVELS[0],
         "submit",
         operator || "系统",
-        "变更执行后自动提交复审，从品牌审核开始",
+        `变更执行后自动提交复审，从品牌审核开始（设计稿 v${newVersion}）`,
+        newVersion,
       );
     }
 

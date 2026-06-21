@@ -1,12 +1,21 @@
 const { getDb, CRAFT_TYPES } = require("./db");
+const { getGiftById } = require("./nationalGift");
 
 function addCraftItem(giftId, craftType, craftsman, notes) {
   const db = getDb();
+  const gift = getGiftById(giftId);
+  const designVersion = gift ? gift.design_version : 1;
   const stmt = db.prepare(`
-    INSERT INTO craft_items (gift_id, craft_type, craftsman, notes)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO craft_items (gift_id, craft_type, craftsman, notes, added_version)
+    VALUES (?, ?, ?, ?, ?)
   `);
-  const result = stmt.run(giftId, craftType, craftsman, notes || null);
+  const result = stmt.run(
+    giftId,
+    craftType,
+    craftsman,
+    notes || null,
+    designVersion,
+  );
   return db
     .prepare("SELECT * FROM craft_items WHERE id = ?")
     .get(result.lastInsertRowid);
@@ -26,11 +35,13 @@ function completeCraftItem(itemId) {
   const item = db.prepare("SELECT * FROM craft_items WHERE id = ?").get(itemId);
   if (!item) return null;
   if (item.completed) return item;
+  const gift = getGiftById(item.gift_id);
+  const designVersion = gift ? gift.design_version : 1;
   db.prepare(
     `
-    UPDATE craft_items SET completed = 1, completed_at = datetime('now', 'localtime') WHERE id = ?
+    UPDATE craft_items SET completed = 1, completed_at = datetime('now', 'localtime'), completed_version = ? WHERE id = ?
   `,
-  ).run(itemId);
+  ).run(designVersion, itemId);
   return db.prepare("SELECT * FROM craft_items WHERE id = ?").get(itemId);
 }
 
@@ -44,20 +55,24 @@ function deleteCraftItem(itemId) {
 
 function areAllCraftsCompleted(giftId) {
   const db = getDb();
+  const gift = getGiftById(giftId);
+  const currentVersion = gift ? gift.design_version : 1;
   const total = db
     .prepare("SELECT COUNT(*) as count FROM craft_items WHERE gift_id = ?")
     .get(giftId).count;
   if (total === 0) return false;
   const completed = db
     .prepare(
-      "SELECT COUNT(*) as count FROM craft_items WHERE gift_id = ? AND completed = 1",
+      "SELECT COUNT(*) as count FROM craft_items WHERE gift_id = ? AND completed = 1 AND completed_version = ?",
     )
-    .get(giftId).count;
+    .get(giftId, currentVersion).count;
   return total === completed;
 }
 
 function validateCraftList(giftId, requireCompleted = true) {
   const db = getDb();
+  const gift = getGiftById(giftId);
+  const currentVersion = gift ? gift.design_version : 1;
   const items = db
     .prepare("SELECT * FROM craft_items WHERE gift_id = ?")
     .all(giftId);
@@ -68,7 +83,10 @@ function validateCraftList(giftId, requireCompleted = true) {
   const incompleteItems = [];
   for (const type of CRAFT_TYPES) {
     const item = items.find((i) => i.craft_type === type);
-    if (item && !item.completed) {
+    if (
+      item &&
+      (!item.completed || item.completed_version !== currentVersion)
+    ) {
       incompleteItems.push(type);
     }
   }
@@ -86,7 +104,7 @@ function validateCraftList(giftId, requireCompleted = true) {
     errors.push(`缺少必要工艺项：${missingTypes.join("、")}`);
   }
   if (requireCompleted && incompleteItems.length > 0) {
-    errors.push(`以下工艺尚未完成：${incompleteItems.join("、")}`);
+    errors.push(`以下工艺尚未完成当前版本：${incompleteItems.join("、")}`);
   }
 
   return {
@@ -97,6 +115,7 @@ function validateCraftList(giftId, requireCompleted = true) {
     incompleteItems,
     errors,
     items,
+    current_version: currentVersion,
   };
 }
 

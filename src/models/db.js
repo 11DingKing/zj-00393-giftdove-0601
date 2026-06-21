@@ -83,6 +83,7 @@ function initSchema() {
       theme_symbolism TEXT,
       status TEXT NOT NULL DEFAULT '${STATUS_DRAFT}',
       current_review_level TEXT,
+      design_version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       production_start_date TEXT,
@@ -98,6 +99,7 @@ function initSchema() {
       action TEXT NOT NULL,
       reviewer TEXT,
       reason TEXT,
+      design_version INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (gift_id) REFERENCES national_gifts(id)
     );
@@ -109,6 +111,8 @@ function initSchema() {
       craftsman TEXT NOT NULL,
       completed INTEGER NOT NULL DEFAULT 0,
       completed_at TEXT,
+      added_version INTEGER NOT NULL DEFAULT 1,
+      completed_version INTEGER,
       notes TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (gift_id) REFERENCES national_gifts(id)
@@ -116,7 +120,9 @@ function initSchema() {
 
     CREATE TABLE IF NOT EXISTS memorial_archives (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      gift_id TEXT NOT NULL UNIQUE,
+      gift_id TEXT NOT NULL,
+      design_version INTEGER NOT NULL DEFAULT 1,
+      is_final INTEGER NOT NULL DEFAULT 0,
       recipient_country TEXT NOT NULL,
       year INTEGER NOT NULL,
       theme_symbolism TEXT,
@@ -198,6 +204,29 @@ function initSchema() {
       `ALTER TABLE national_gifts ADD COLUMN has_occasion_change INTEGER NOT NULL DEFAULT 0`,
     );
   }
+  if (!colNames.includes("design_version")) {
+    d.exec(
+      `ALTER TABLE national_gifts ADD COLUMN design_version INTEGER NOT NULL DEFAULT 1`,
+    );
+  }
+
+  const auditCols = d.prepare("PRAGMA table_info(audit_logs)").all();
+  const auditColNames = auditCols.map((c) => c.name);
+  if (!auditColNames.includes("design_version")) {
+    d.exec(`ALTER TABLE audit_logs ADD COLUMN design_version INTEGER`);
+  }
+
+  const craftCols = d.prepare("PRAGMA table_info(craft_items)").all();
+  const craftColNames = craftCols.map((c) => c.name);
+  if (!craftColNames.includes("added_version")) {
+    d.exec(
+      `ALTER TABLE craft_items ADD COLUMN added_version INTEGER NOT NULL DEFAULT 1`,
+    );
+  }
+  if (!craftColNames.includes("completed_version")) {
+    d.exec(`ALTER TABLE craft_items ADD COLUMN completed_version INTEGER`);
+  }
+
   const archiveCols = d.prepare("PRAGMA table_info(memorial_archives)").all();
   const archiveColNames = archiveCols.map((c) => c.name);
   if (!archiveColNames.includes("change_count")) {
@@ -207,6 +236,16 @@ function initSchema() {
   }
   if (!archiveColNames.includes("symbolism_history")) {
     d.exec(`ALTER TABLE memorial_archives ADD COLUMN symbolism_history TEXT`);
+  }
+  if (!archiveColNames.includes("design_version")) {
+    d.exec(
+      `ALTER TABLE memorial_archives ADD COLUMN design_version INTEGER NOT NULL DEFAULT 1`,
+    );
+  }
+  if (!archiveColNames.includes("is_final")) {
+    d.exec(
+      `ALTER TABLE memorial_archives ADD COLUMN is_final INTEGER NOT NULL DEFAULT 0`,
+    );
   }
 }
 

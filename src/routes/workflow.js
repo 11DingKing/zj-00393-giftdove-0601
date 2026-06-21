@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { getGiftById, updateGiftStatus } = require("../models/nationalGift");
+const {
+  getGiftById,
+  updateGiftStatus,
+  incrementDesignVersion,
+} = require("../models/nationalGift");
 const {
   addAuditLog,
   getAuditLogs,
@@ -41,13 +45,14 @@ router.post("/:id/submit", (req, res) => {
     REVIEW_LEVELS[0],
     "submit",
     req.body.reviewer,
-    "提交审核",
+    `提交审核（设计稿 v${gift.design_version}）`,
+    gift.design_version,
   );
 
   res.json({
     success: true,
     data: updated,
-    message: "已提交审核，进入品牌审核阶段",
+    message: `已提交审核，进入品牌审核阶段（设计稿 v${gift.design_version}）`,
   });
 });
 
@@ -86,7 +91,8 @@ router.post("/:id/approve", (req, res) => {
     currentLevel,
     "approve",
     reviewer,
-    `${REVIEW_LEVEL_NAMES[currentLevel]}通过`,
+    `${REVIEW_LEVEL_NAMES[currentLevel]}通过（设计稿 v${gift.design_version}）`,
+    gift.design_version,
   );
 
   if (isFinalLevel) {
@@ -97,7 +103,7 @@ router.post("/:id/approve", (req, res) => {
     return res.json({
       success: true,
       data: updated,
-      message: "全部审核通过，已进入制作中",
+      message: `全部审核通过，已进入制作中（设计稿 v${gift.design_version}）`,
     });
   }
 
@@ -108,7 +114,7 @@ router.post("/:id/approve", (req, res) => {
   res.json({
     success: true,
     data: updated,
-    message: `${REVIEW_LEVEL_NAMES[currentLevel]}通过，进入${REVIEW_LEVEL_NAMES[nextLevel]}`,
+    message: `${REVIEW_LEVEL_NAMES[currentLevel]}通过，进入${REVIEW_LEVEL_NAMES[nextLevel]}（设计稿 v${gift.design_version}）`,
   });
 });
 
@@ -131,24 +137,40 @@ router.post("/:id/reject", (req, res) => {
   }
 
   const currentLevel = gift.current_review_level;
-  addAuditLog(req.params.id, currentLevel, "reject", reviewer, reason);
+  const oldVersion = gift.design_version;
+  const newVersion = oldVersion + 1;
 
+  addAuditLog(
+    req.params.id,
+    currentLevel,
+    "reject",
+    reviewer,
+    reason,
+    oldVersion,
+  );
+
+  incrementDesignVersion(req.params.id);
   resetCraftsForRework(req.params.id);
+
   addAuditLog(
     req.params.id,
     currentLevel,
     "rework",
     reviewer,
-    "驳回重做：所有工艺完成状态已重置，需重新校验工艺清单",
+    `驳回重做：设计稿从 v${oldVersion} 升级为 v${newVersion}，所有工艺完成状态已重置，需重新校验工艺清单`,
+    newVersion,
   );
 
   const updated = updateGiftStatus(req.params.id, STATUS_DRAFT, {
     current_review_level: null,
+    production_start_date: null,
+    production_end_date: null,
   });
+
   res.json({
     success: true,
     data: updated,
-    message: `已被${REVIEW_LEVEL_NAMES[currentLevel]}驳回，回到方案修改中，所有工艺需重新完成并校验`,
+    message: `已被${REVIEW_LEVEL_NAMES[currentLevel]}驳回，设计稿升级为 v${newVersion}，回到方案修改中，所有工艺需重新完成并校验`,
   });
 });
 
