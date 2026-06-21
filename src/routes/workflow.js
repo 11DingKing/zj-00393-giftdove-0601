@@ -17,18 +17,20 @@ const {
   REVIEW_LEVEL_NAMES,
 } = require("../models/db");
 const { createArchive } = require("../models/memorialArchive");
+const {
+  validateCraftList,
+  resetCraftsForRework,
+} = require("../models/craftItem");
 
 router.post("/:id/submit", (req, res) => {
   const gift = getGiftById(req.params.id);
   if (!gift)
     return res.status(404).json({ success: false, message: "国礼车不存在" });
   if (gift.status !== STATUS_DRAFT) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: `当前状态为"${gift.status}"，仅"${STATUS_DRAFT}"可提交审核`,
-      });
+    return res.status(400).json({
+      success: false,
+      message: `当前状态为"${gift.status}"，仅"${STATUS_DRAFT}"可提交审核`,
+    });
   }
 
   const updated = updateGiftStatus(req.params.id, STATUS_PENDING_REVIEW, {
@@ -55,17 +57,28 @@ router.post("/:id/approve", (req, res) => {
   if (!gift)
     return res.status(404).json({ success: false, message: "国礼车不存在" });
   if (gift.status !== STATUS_PENDING_REVIEW) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: `当前状态为"${gift.status}"，仅"${STATUS_PENDING_REVIEW}"可审批`,
-      });
+    return res.status(400).json({
+      success: false,
+      message: `当前状态为"${gift.status}"，仅"${STATUS_PENDING_REVIEW}"可审批`,
+    });
   }
 
   const currentLevel = gift.current_review_level;
   if (!currentLevel || !REVIEW_LEVELS.includes(currentLevel)) {
     return res.status(400).json({ success: false, message: "审核级别异常" });
+  }
+
+  const currentIdx = REVIEW_LEVELS.indexOf(currentLevel);
+  const isFinalLevel = currentIdx === REVIEW_LEVELS.length - 1;
+
+  if (isFinalLevel) {
+    const craftValidation = validateCraftList(req.params.id, false);
+    if (!craftValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: `工艺审核无法通过：${craftValidation.errors.join("；")}`,
+      });
+    }
   }
 
   addAuditLog(
@@ -76,9 +89,7 @@ router.post("/:id/approve", (req, res) => {
     `${REVIEW_LEVEL_NAMES[currentLevel]}通过`,
   );
 
-  const currentIdx = REVIEW_LEVELS.indexOf(currentLevel);
-
-  if (currentIdx === REVIEW_LEVELS.length - 1) {
+  if (isFinalLevel) {
     const updated = updateGiftStatus(req.params.id, STATUS_IN_PRODUCTION, {
       current_review_level: null,
       production_start_date: new Date().toISOString().slice(0, 10),
@@ -113,16 +124,23 @@ router.post("/:id/reject", (req, res) => {
   if (!gift)
     return res.status(404).json({ success: false, message: "国礼车不存在" });
   if (gift.status !== STATUS_PENDING_REVIEW) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: `当前状态为"${gift.status}"，仅"${STATUS_PENDING_REVIEW}"可驳回`,
-      });
+    return res.status(400).json({
+      success: false,
+      message: `当前状态为"${gift.status}"，仅"${STATUS_PENDING_REVIEW}"可驳回`,
+    });
   }
 
   const currentLevel = gift.current_review_level;
   addAuditLog(req.params.id, currentLevel, "reject", reviewer, reason);
+
+  resetCraftsForRework(req.params.id);
+  addAuditLog(
+    req.params.id,
+    currentLevel,
+    "rework",
+    reviewer,
+    "驳回重做：所有工艺完成状态已重置，需重新校验工艺清单",
+  );
 
   const updated = updateGiftStatus(req.params.id, STATUS_DRAFT, {
     current_review_level: null,
@@ -130,7 +148,7 @@ router.post("/:id/reject", (req, res) => {
   res.json({
     success: true,
     data: updated,
-    message: `已被${REVIEW_LEVEL_NAMES[currentLevel]}驳回，回到方案修改中`,
+    message: `已被${REVIEW_LEVEL_NAMES[currentLevel]}驳回，回到方案修改中，所有工艺需重新完成并校验`,
   });
 });
 
@@ -139,12 +157,18 @@ router.post("/:id/ready-delivery", (req, res) => {
   if (!gift)
     return res.status(404).json({ success: false, message: "国礼车不存在" });
   if (gift.status !== STATUS_IN_PRODUCTION) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: `当前状态为"${gift.status}"，仅"${STATUS_IN_PRODUCTION}"可转为待交付`,
-      });
+    return res.status(400).json({
+      success: false,
+      message: `当前状态为"${gift.status}"，仅"${STATUS_IN_PRODUCTION}"可转为待交付`,
+    });
+  }
+
+  const craftValidation = validateCraftList(req.params.id, true);
+  if (!craftValidation.valid) {
+    return res.status(400).json({
+      success: false,
+      message: `无法转入待交付：${craftValidation.errors.join("；")}`,
+    });
   }
 
   const updated = updateGiftStatus(req.params.id, STATUS_PENDING_DELIVERY, {
@@ -158,12 +182,18 @@ router.post("/:id/deliver", (req, res) => {
   if (!gift)
     return res.status(404).json({ success: false, message: "国礼车不存在" });
   if (gift.status !== STATUS_PENDING_DELIVERY) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: `当前状态为"${gift.status}"，仅"${STATUS_PENDING_DELIVERY}"可确认交付`,
-      });
+    return res.status(400).json({
+      success: false,
+      message: `当前状态为"${gift.status}"，仅"${STATUS_PENDING_DELIVERY}"可确认交付`,
+    });
+  }
+
+  const craftValidation = validateCraftList(req.params.id, true);
+  if (!craftValidation.valid) {
+    return res.status(400).json({
+      success: false,
+      message: `无法确认交付：${craftValidation.errors.join("；")}`,
+    });
   }
 
   const updated = updateGiftStatus(req.params.id, STATUS_DELIVERED, {
@@ -178,12 +208,18 @@ router.post("/:id/archive", (req, res) => {
   if (!gift)
     return res.status(404).json({ success: false, message: "国礼车不存在" });
   if (gift.status !== STATUS_DELIVERED) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: `当前状态为"${gift.status}"，仅"${STATUS_DELIVERED}"可归档`,
-      });
+    return res.status(400).json({
+      success: false,
+      message: `当前状态为"${gift.status}"，仅"${STATUS_DELIVERED}"可归档`,
+    });
+  }
+
+  const craftValidation = validateCraftList(req.params.id, true);
+  if (!craftValidation.valid) {
+    return res.status(400).json({
+      success: false,
+      message: `无法归档：${craftValidation.errors.join("；")}`,
+    });
   }
 
   const updated = updateGiftStatus(req.params.id, STATUS_ARCHIVED, {
